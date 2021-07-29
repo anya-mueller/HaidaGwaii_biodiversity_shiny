@@ -42,24 +42,24 @@ ui <- fluidPage(
     sidebarLayout(
         sidebarPanel(
             #choose between co1 and 12s
-            #selectInput(inputId = "data_set",
-             #           label = "Data set:",
-              #          choices = c("Co1",
-               #                     "12s")
-                #        ),
-            selectInput(inputId = "facet",
-                        label = "Facet by:",
-                        choices = eDNA_metadata %>%
-                            #select columns we want to be able to face by
-                            select(sample_id,
-                                   type,
-                                   site,
-                                   habitat,
-                                   sample_site,
-                                   coast_face) %>%
-                            #take column names
-                            colnames()
+            selectInput(inputId = "data_set",
+                        label = "Data set:",
+                        choices = c("Co1" = "co1_taxonomy_metadata_long_nc_nsd_ei" ,
+                                    "12s" = "s12_taxonomy_metadata_long_nc_nsd_ei")
                         ),
+            #selectInput(inputId = "facet",
+             #           label = "Facet by:",
+              #          choices = eDNA_metadata %>%
+               #             #select columns we want to be able to face by
+                #            select(sample_id,
+                 #                  type,
+                  #                 site,
+                   #                habitat,
+                    #               sample_site,
+                     #              coast_face) %>%
+                      #      #take column names
+                       #     colnames()
+                        #),
             selectInput(inputId = "taxonomic_level",
                         label = "Taxonomic level:",
                         choices = co1_taxonomy_metadata_long_nc_nsd_ei %>%
@@ -85,31 +85,50 @@ ui <- fluidPage(
 server <- function(input, output) {
     
     output$taxonomic_barPlot <- renderPlot({
-        req(input$taxonomic_level, input$facet, input$bar_position)
-        co1_taxonomy_metadata_long_nc_nsd_ei %>%
+        
+        #make sure usre has interacted
+        req(input$data_set, 
+            input$taxonomic_level, 
+            #input$facet, 
+            input$bar_position)
+        
+        #make data for plot
+        mydata <- get(input$data_set)
+        
+        plot_data <- mydata %>%
             filter(kingdom == "Metazoa", #keep only metazoa
                    metazoa_holoplankton != 1, #remove holoplankton
                    metazoa_terrestrial != 1) %>% #remove terrestrial taxonomies
-            #remove classes that are NA - maybe its interesting to keep NAs in?
-            #drop_na(input$taxonomic_level) %>% 
-            #change order of sample_id based on habitat
+            #order x axis
             mutate(habitat = factor(habitat,
-                                    levels = c("Pelagic",
+                                    levels = c("Kelp",
                                                "Seagrass",
                                                "Unvegetated",
-                                               "Kelp",
+                                               "Pelagic",
                                                "Inside kelp",
                                                "Control",
                                                "Outside kelp"
                                     ))) %>%
+            arrange(habitat) %>%
+            mutate(row_order = c(1:n())) %>%
+            mutate(sample_id = fct_reorder(sample_id,
+                                           row_order)) %>%
+            group_by(sample_id) %>%
+            mutate(x_order = group_indices()) %>%
+            ungroup() %>% 
+            #set up data for x axis label
+            group_by(habitat) %>%
+            mutate(habi_label = mean(x_order)) %>%
+            mutate(habi_line = max(x_order)) %>% 
+            ungroup()
+        plot_data %>%
             ggplot(data = .,
-                   aes(x = sample_id, 
-                       y = taxonomic_read_index
-                       )
-                   ) +
+                   aes(x = x_order,
+                       y = taxonomic_read_index,
+                       fill = class)) +
             geom_bar(stat = "identity", 
                      position = input$bar_position,
-                     aes_string(fill = input$taxonomic_level)) + 
+                     aes_string(fill = input$taxonomic_level)) +
             labs(title = 
                      paste("Co1", 
                            input$taxonomic_level,
@@ -117,19 +136,31 @@ server <- function(input, output) {
                            input$facet,
                            sep = " "),
                  x = "Sample",
-                 y = "Relative taxonomic read index") +
-            theme_classic() +
-            theme(axis.text.x = element_blank(),
-                  axis.text.y = 
-                      element_text(size = 5)
+                 y = "Relative taxonomic read index",
+                 fill = input$taxonomic_level) +
+            theme_classic()+
+            scale_fill_manual(values=as.vector(glasbey(28))) +
+            geom_vline(xintercept = plot_data %>%
+                           pull(habi_line)) +
+            annotate(geom = "text",
+                     x = c(plot_data %>%
+                               pull(habi_label) %>%
+                               unique()
+                     ),
+                     y = -0.1,
+                     label = c(plot_data %>%
+                                   pull(habitat) %>%
+                                   unique() %>%
+                                   as.character()
+                     ),
+                     size = 3) +
+            theme(
+                axis.ticks.x = element_blank(),
+                axis.text.x = element_blank(),
+                axis.text.y = 
+                    element_text(size = 5)
             ) +
-            scale_fill_manual(values=as.vector(glasbey(28)))# +
-            #facet_wrap( ~ as.name(input$facet), 
-             #           strip.position = "bottom",
-              #          nrow = 2,
-               #         ncol = 4,
-                #        scales = "free_x"
-            #)
+            scale_y_continuous(breaks = seq(0, by = 0.5))
     })
 }
 
