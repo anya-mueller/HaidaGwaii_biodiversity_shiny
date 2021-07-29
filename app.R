@@ -28,9 +28,7 @@ s12_taxonomy_metadata_long_nc_nsd_ei <- read_csv(here("data",
                                                       "s12_taxonomy_long_nc_nsd_ei.csv")) %>%
     #merge with metadata
     left_join(.,
-              eDNA_metadata) %>%
-    #add empty column for filter
-    mutate(metazoa_holoplankton = 0)
+              eDNA_metadata)
 
 # Define UI for application that draws a histogram
 ui <- fluidPage(
@@ -68,6 +66,11 @@ ui <- fluidPage(
                             #take column names
                             colnames()
                         ),
+            #selectInput(inputId = "include_na",
+             #           label = "Include NAs?",
+              #          choices = c("Yes" ,
+               #                     "No")
+            ),
             selectInput(inputId = "bar_position",
                         label = "Bar position:",
                         choices = c("fill", "stack")
@@ -76,7 +79,8 @@ ui <- fluidPage(
 
         # Show a plot of the generated distribution
         mainPanel(
-           plotOutput("taxonomic_barPlot")
+           plotOutput("taxonomic_index_barPlot"),
+           plotOutput("taxonomic_read_number_barPlot")
         )
     )
 )
@@ -84,15 +88,16 @@ ui <- fluidPage(
 # Define server logic required to draw a histogram
 server <- function(input, output) {
     
-    output$taxonomic_barPlot <- renderPlot({
-        
-        #make sure usre has interacted
+    
+    output$taxonomic_index_barPlot <- renderPlot({
+        #make sure user has interacted
         req(input$data_set, 
             input$taxonomic_level, 
             #input$facet, 
-            input$bar_position)
+            input$bar_position,
+            input$include_na)
         
-        #make data for plot
+        #make data for plots
         mydata <- get(input$data_set)
         
         plot_data <- mydata %>%
@@ -121,6 +126,8 @@ server <- function(input, output) {
             mutate(habi_label = mean(x_order)) %>%
             mutate(habi_line = max(x_order)) %>% 
             ungroup()
+        
+        #plot the data
         plot_data %>%
             ggplot(data = .,
                    aes(x = x_order,
@@ -132,11 +139,13 @@ server <- function(input, output) {
             labs(title = 
                      paste("Co1", 
                            input$taxonomic_level,
-                           "- ordered by", 
-                           input$facet,
+                           #"- ordered by", 
+                           #input$facet,
                            sep = " "),
                  x = "Sample",
-                 y = "Relative taxonomic read index",
+                 y = if_else(condition = input$bar_position == "fill",
+                             true = "Relative taxonomic read index",
+                             false = "Taxonomic read index"),
                  fill = input$taxonomic_level) +
             theme_classic()+
             scale_fill_manual(values=as.vector(glasbey(28))) +
@@ -147,22 +156,121 @@ server <- function(input, output) {
                                pull(habi_label) %>%
                                unique()
                      ),
-                     y = -0.1,
+                     y = if_else(condition = input$bar_position == "fill",
+                                 true = -0.05,
+                                 false = -1),
                      label = c(plot_data %>%
                                    pull(habitat) %>%
                                    unique() %>%
                                    as.character()
                      ),
-                     size = 3) +
+                     size = 5) +
             theme(
                 axis.ticks.x = element_blank(),
                 axis.text.x = element_blank(),
-                axis.text.y = 
-                    element_text(size = 5)
-            ) +
-            scale_y_continuous(breaks = seq(0, by = 0.5))
+                axis.text.y = element_text(size = 10),
+                axis.title = element_text(size = 15),
+                title = element_text(size = 20)
+            ) #+
+            #scale_y_continuous(breaks = seq(0, by = 0.5))
+        
     })
-}
+    output$taxonomic_read_number_barPlot <- renderPlot({
+        #make sure user has interacted
+        req(input$data_set, 
+            input$taxonomic_level, 
+            #input$facet, 
+            input$bar_position,
+            input$include_na)
+        
+        #make data for plots
+        mydata <- get(input$data_set)
+        
+        plot_data <- mydata %>%
+            filter(kingdom == "Metazoa", #keep only metazoa
+                   metazoa_holoplankton != 1, #remove holoplankton
+                   metazoa_terrestrial != 1) %>% #remove terrestrial taxonomies
+            #order x axis
+            mutate(habitat = factor(habitat,
+                                    levels = c("Kelp",
+                                               "Seagrass",
+                                               "Unvegetated",
+                                               "Pelagic",
+                                               "Inside kelp",
+                                               "Control",
+                                               "Outside kelp"
+                                    ))) %>%
+            arrange(habitat) %>%
+            mutate(row_order = c(1:n())) %>%
+            mutate(sample_id = fct_reorder(sample_id,
+                                           row_order)) %>%
+            group_by(sample_id) %>%
+            mutate(x_order = group_indices()) %>%
+            ungroup() %>% 
+            #set up data for x axis label
+            group_by(habitat) %>%
+            mutate(habi_label = mean(x_order)) %>%
+            mutate(habi_line = max(x_order)) %>% 
+            ungroup()
+        
+        #filter for NAs or not
+        #plot_data <- reactive({if(input$include_na == "Yes"){
+         #   plot_data()
+        #}
+         #   else {
+          #      plot_data() %>%
+           #         drop_na(get(input$taxonomic_level)) 
+            #}
+        #})
+        
+        #plot data
+        plot_data %>%
+            ggplot(data = .,
+                   aes(x = x_order,
+                       y = taxonomic_read_raw,
+                       fill = class)) +
+            geom_bar(stat = "identity", 
+                     position = input$bar_position,
+                     aes_string(fill = input$taxonomic_level)) +
+            labs(title = 
+                     paste("Co1", 
+                           input$taxonomic_level,
+                           #"- ordered by", 
+                           #input$facet,
+                           sep = " "),
+                 x = "Sample",
+                 y = if_else(condition = input$bar_position == "fill",
+                                   true = "Relative taxonomic read number",
+                                   false = "Taxonomic read number"),
+                 fill = input$taxonomic_level) +
+            theme_classic()+
+            scale_fill_manual(values=as.vector(glasbey(28))) +
+            geom_vline(xintercept = plot_data %>%
+                           pull(habi_line)) +
+            annotate(geom = "text",
+                     x = c(plot_data %>%
+                               pull(habi_label) %>%
+                               unique()
+                     ),
+                     y = if_else(condition = input$bar_position == "fill",
+                                 true = -0.05,
+                                 false = -1),
+                     label = c(plot_data %>%
+                                   pull(habitat) %>%
+                                   unique() %>%
+                                   as.character()
+                     ),
+                     size = 5) +
+            theme(
+                axis.ticks.x = element_blank(),
+                axis.text.x = element_blank(),
+                axis.text.y = element_text(size = 10),
+                axis.title = element_text(size = 15),
+                title = element_text(size = 20)
+            ) #+
+            #scale_y_continuous(breaks = seq(0, by = 0.5))
+        })
+    }
 
 # Run the application 
 shinyApp(ui = ui, server = server)
