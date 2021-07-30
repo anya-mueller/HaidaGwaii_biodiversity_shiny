@@ -36,8 +36,9 @@ ui <- fluidPage(
     # Application title
     titlePanel("Haida Gwaii biodiversity"),
 
-    # Sidebar with a select input for plotting
+    # have layout with side bar that has inputs and main panel with outputs
     sidebarLayout(
+        
         sidebarPanel(
             #choose between co1 and 12s
             selectInput(inputId = "data_set",
@@ -45,19 +46,6 @@ ui <- fluidPage(
                         choices = c("Co1" = "co1_taxonomy_metadata_long_nc_nsd_ei" ,
                                     "12s" = "s12_taxonomy_metadata_long_nc_nsd_ei")
                         ),
-            #selectInput(inputId = "facet",
-             #           label = "Facet by:",
-              #          choices = eDNA_metadata %>%
-               #             #select columns we want to be able to face by
-                #            select(sample_id,
-                 #                  type,
-                  #                 site,
-                   #                habitat,
-                    #               sample_site,
-                     #              coast_face) %>%
-                      #      #take column names
-                       #     colnames()
-                        #),
             selectInput(inputId = "taxonomic_level",
                         label = "Taxonomic level:",
                         choices = co1_taxonomy_metadata_long_nc_nsd_ei %>%
@@ -66,41 +54,31 @@ ui <- fluidPage(
                             #take column names
                             colnames()
                         ),
-            #selectInput(inputId = "include_na",
-             #           label = "Include NAs?",
-              #          choices = c("Yes" ,
-               #                     "No")
-            ),
+            selectInput(inputId = "include_na",
+                        label = "Include NAs?",
+                        choices = c("Yes" ,
+                                    "No")
+                        ),
             selectInput(inputId = "bar_position",
                         label = "Bar position:",
                         choices = c("fill", "stack")
                             )  
         ),
 
-        # Show a plot of the generated distribution
+        # Show plots in the main pannel
         mainPanel(
            plotOutput("taxonomic_index_barPlot"),
            plotOutput("taxonomic_read_number_barPlot")
         )
     )
 )
-
 # Define server logic required to draw a histogram
 server <- function(input, output) {
     
-    
-    output$taxonomic_index_barPlot <- renderPlot({
-        #make sure user has interacted
-        req(input$data_set, 
-            input$taxonomic_level, 
-            #input$facet, 
-            input$bar_position,
-            input$include_na)
-        
-        #make data for plots
-        mydata <- get(input$data_set)
-        
-        plot_data <- mydata %>%
+    #make data for plots
+    #grab dataset of interest
+    intermediate_data <- reactive({
+        get(input$data_set) %>%
             filter(kingdom == "Metazoa", #keep only metazoa
                    metazoa_holoplankton != 1, #remove holoplankton
                    metazoa_terrestrial != 1) %>% #remove terrestrial taxonomies
@@ -126,9 +104,31 @@ server <- function(input, output) {
             mutate(habi_label = mean(x_order)) %>%
             mutate(habi_line = max(x_order)) %>% 
             ungroup()
+    })
+    #filter outs Nas if user chooses
+    plot_data <- reactive({ if(input$include_na == "Yes"){
+        #if the user wants nas then leave dataset as is
+        intermediate_data()
+    }
+        else{
+            #if user does not want nas then filter them out for taxonomy of interest
+            intermediate_data() %>%
+                filter(!is.na(get(input$taxonomic_level)))
+        }
+        
+    })
+    
+    output$taxonomic_index_barPlot <- renderPlot({
+        #make sure user has interacted
+        req(input$data_set, 
+            input$taxonomic_level, 
+            #input$facet, 
+            input$bar_position,
+            #input$include_na
+            )
         
         #plot the data
-        plot_data %>%
+        plot_data() %>%
             ggplot(data = .,
                    aes(x = x_order,
                        y = taxonomic_read_index,
@@ -136,8 +136,11 @@ server <- function(input, output) {
             geom_bar(stat = "identity", 
                      position = input$bar_position,
                      aes_string(fill = input$taxonomic_level)) +
+            #make titles and labels based on inputs
             labs(title = 
-                     paste("Co1", 
+                     paste(if_else(condition = input$data_set == "co1_taxonomy_metadata_long_nc_nsd_ei",
+                                   true = "Co1",
+                                   false = "12s"), 
                            input$taxonomic_level,
                            #"- ordered by", 
                            #input$facet,
@@ -149,17 +152,17 @@ server <- function(input, output) {
                  fill = input$taxonomic_level) +
             theme_classic()+
             scale_fill_manual(values=as.vector(glasbey(28))) +
-            geom_vline(xintercept = plot_data %>%
+            geom_vline(xintercept = plot_data() %>%
                            pull(habi_line)) +
             annotate(geom = "text",
-                     x = c(plot_data %>%
+                     x = c(plot_data() %>%
                                pull(habi_label) %>%
                                unique()
                      ),
                      y = if_else(condition = input$bar_position == "fill",
                                  true = -0.05,
-                                 false = -1),
-                     label = c(plot_data %>%
+                                 false = -0.15),
+                     label = c(plot_data() %>%
                                    pull(habitat) %>%
                                    unique() %>%
                                    as.character()
@@ -181,50 +184,11 @@ server <- function(input, output) {
             input$taxonomic_level, 
             #input$facet, 
             input$bar_position,
-            input$include_na)
-        
-        #make data for plots
-        mydata <- get(input$data_set)
-        
-        plot_data <- mydata %>%
-            filter(kingdom == "Metazoa", #keep only metazoa
-                   metazoa_holoplankton != 1, #remove holoplankton
-                   metazoa_terrestrial != 1) %>% #remove terrestrial taxonomies
-            #order x axis
-            mutate(habitat = factor(habitat,
-                                    levels = c("Kelp",
-                                               "Seagrass",
-                                               "Unvegetated",
-                                               "Pelagic",
-                                               "Inside kelp",
-                                               "Control",
-                                               "Outside kelp"
-                                    ))) %>%
-            arrange(habitat) %>%
-            mutate(row_order = c(1:n())) %>%
-            mutate(sample_id = fct_reorder(sample_id,
-                                           row_order)) %>%
-            group_by(sample_id) %>%
-            mutate(x_order = group_indices()) %>%
-            ungroup() %>% 
-            #set up data for x axis label
-            group_by(habitat) %>%
-            mutate(habi_label = mean(x_order)) %>%
-            mutate(habi_line = max(x_order)) %>% 
-            ungroup()
-        
-        #filter for NAs or not
-        #plot_data <- reactive({if(input$include_na == "Yes"){
-         #   plot_data()
-        #}
-         #   else {
-          #      plot_data() %>%
-           #         drop_na(get(input$taxonomic_level)) 
-            #}
-        #})
+            #input$include_na
+            )
         
         #plot data
-        plot_data %>%
+        plot_data() %>%
             ggplot(data = .,
                    aes(x = x_order,
                        y = taxonomic_read_raw,
@@ -233,7 +197,9 @@ server <- function(input, output) {
                      position = input$bar_position,
                      aes_string(fill = input$taxonomic_level)) +
             labs(title = 
-                     paste("Co1", 
+                     paste(if_else(condition = input$data_set == "co1_taxonomy_metadata_long_nc_nsd_ei",
+                                   true = "Co1",
+                                   false = "12s"), 
                            input$taxonomic_level,
                            #"- ordered by", 
                            #input$facet,
@@ -245,17 +211,17 @@ server <- function(input, output) {
                  fill = input$taxonomic_level) +
             theme_classic()+
             scale_fill_manual(values=as.vector(glasbey(28))) +
-            geom_vline(xintercept = plot_data %>%
+            geom_vline(xintercept = plot_data() %>%
                            pull(habi_line)) +
             annotate(geom = "text",
-                     x = c(plot_data %>%
+                     x = c(plot_data() %>%
                                pull(habi_label) %>%
                                unique()
                      ),
                      y = if_else(condition = input$bar_position == "fill",
                                  true = -0.05,
-                                 false = -1),
-                     label = c(plot_data %>%
+                                 false = -15),
+                     label = c(plot_data() %>%
                                    pull(habitat) %>%
                                    unique() %>%
                                    as.character()
